@@ -20,8 +20,8 @@ use winit::{
     },
     error::{
         ExternalError as WinitExternalError,
-        NotSupportedError,
-        OsError,
+        NotSupportedError as WinitNotSupportedError,
+        OsError as WinitOsError,
     },
 };
 
@@ -82,6 +82,59 @@ impl VkSurfaceBuild for WindowBuilder {
     }
 }
 
+/// Wrapper for the `error` library from winit 0.20.0
+#[derive(Debug)]
+pub enum WindowCreationError {
+    ExternalError(WinitExternalError),
+    NotSupportedError(WinitNotSupportedError),
+    OsError(WinitOsError),
+}
+
+impl From<WinitOsError> for WindowCreationError {
+    fn from(e: WinitOsError) -> WindowCreationError {
+        WindowCreationError::OsError(e)
+    }
+}
+
+impl From<WinitExternalError> for WindowCreationError {
+    fn from(e: WinitExternalError) -> WindowCreationError {
+        WindowCreationError::ExternalError(e)
+    }
+}
+
+impl From<WinitNotSupportedError> for WindowCreationError {
+    fn from(e: WinitNotSupportedError) -> WindowCreationError {
+        WindowCreationError::NotSupportedError(e)
+    }
+}
+
+impl error::Error for WindowCreationError {
+    #[inline]
+    fn description(&self) -> &str {
+        match *self {
+            WindowCreationError::ExternalError(_) => "Encountered ExternalError when trying to create winit window",
+            WindowCreationError::NotSupportedError(_) => "Encountered NotSupportedError when trying to create winit window",
+            WindowCreationError::OsError(_) => "Encountered OsError when trying to create winit window",
+        }
+    }
+
+    #[inline]
+    fn cause(&self) -> Option<&dyn error::Error> {
+        match self {
+            WindowCreationError::ExternalError(e) => e.source(),
+            WindowCreationError::NotSupportedError(e) => e.source(),
+            WindowCreationError::OsError(e) => e.source(),
+        }
+    }
+}
+
+impl fmt::Display for WindowCreationError {
+    #[inline]
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(fmt, "{}", error::Error::description(self))
+    }
+}
+
 /// Error that can happen when creating a window.
 #[derive(Debug)]
 pub enum CreationError {
@@ -130,6 +183,25 @@ impl From<WindowCreationError> for CreationError {
     }
 }
 
+impl From<WinitOsError> for CreationError {
+    fn from(e: WinitOsError) -> CreationError {
+        CreationError::WindowCreationError(e.into())
+    }
+}
+
+impl From<WinitExternalError> for CreationError {
+    fn from(e: WinitExternalError) -> CreationError {
+        CreationError::WindowCreationError(e.into())
+    }
+}
+
+impl From<WinitNotSupportedError> for CreationError {
+    fn from(e: WinitNotSupportedError) -> CreationError {
+        CreationError::WindowCreationError(e.into())
+    }
+}
+
+
 #[cfg(target_os = "android")]
 unsafe fn winit_to_surface<W: SafeBorrow<Window>>(
     instance: Arc<Instance>, win: W,
@@ -142,10 +214,10 @@ unsafe fn winit_to_surface<W: SafeBorrow<Window>>(
 unsafe fn winit_to_surface<W: SafeBorrow<Window>>(
     instance: Arc<Instance>, win: W,
 ) -> Result<Arc<Surface<W>>, SurfaceCreationError> {
-    use winit::os::unix::WindowExt;
+    use winit::platform::unix::WindowExtUnix;
     match (
-        win.borrow().get_wayland_display(),
-        win.borrow().get_wayland_surface(),
+        win.borrow().wayland_display(),
+        win.borrow().wayland_surface(),
     ) {
         (Some(display), Some(surface)) => Surface::from_wayland(instance, display, surface, win),
         _ => {
@@ -154,15 +226,15 @@ unsafe fn winit_to_surface<W: SafeBorrow<Window>>(
             if instance.loaded_extensions().khr_xlib_surface {
                 Surface::from_xlib(
                     instance,
-                    win.borrow().get_xlib_display().unwrap(),
-                    win.borrow().get_xlib_window().unwrap() as _,
+                    win.borrow().xlib_display().unwrap(),
+                    win.borrow().xlib_window().unwrap() as _,
                     win,
                 )
             } else {
                 Surface::from_xcb(
                     instance,
-                    win.borrow().get_xcb_connection().unwrap(),
-                    win.borrow().get_xlib_window().unwrap() as _,
+                    win.borrow().xcb_connection().unwrap(),
+                    win.borrow().xlib_window().unwrap() as _,
                     win,
                 )
             }
